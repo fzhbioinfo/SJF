@@ -191,7 +191,7 @@ class SubJobFrame:
     def parents_status(job_graph, job):
         if len(job_graph[job]['Parents']) == 0:
             return 'complete'
-        status_list = [parent['Status'] for parent in job_graph[job]['Parents']]
+        status_list = [job_graph[parent]['Status'] for parent in job_graph[job]['Parents']]
         if 'incomplete' not in status_list:
             return 'complete'
         else:
@@ -264,8 +264,10 @@ def main():
     parser.add_argument('-work_dir', help='work dir', required=True)
     parser.add_argument('-info', help='sample info', required=True)
     parser.add_argument('-create_only', help='only create scripts', action='store_true')
+    parser.add_argument('-submit_only', help='only submit scripts', action='store_true')
     parsed_args = parser.parse_args()
-    CreateJob.create_job(parsed_args)
+    if not parsed_args.submit_only:
+        CreateJob.create_job(parsed_args)
     if parsed_args.create_only:
         logger.info('Only Create Scripts and Exit!')
         sys.exit(0)
