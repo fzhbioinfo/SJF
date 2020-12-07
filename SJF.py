@@ -4,13 +4,9 @@ import re
 import sys
 import time
 import logging
-import matplotlib
 import subprocess
 import pandas as pd
-import networkx as nx
 from argparse import ArgumentParser
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
 
 
 logger = logging.getLogger()
@@ -140,33 +136,6 @@ class SubJobFrame:
         return job_graph
 
     @staticmethod
-    def job_plot(job_graph, work_dir):
-        di_graph = nx.DiGraph()
-        for job in job_graph.keys():
-            if job_graph[job]['Status'] == 'complete':
-                color = 'green'
-            else:
-                color = 'red'
-            if job_graph[job]['Type'] == 'single':
-                sample = os.path.basename(os.path.dirname(os.path.dirname(job)))
-                source_node = sample + ' ' + job_graph[job]['Name']
-                di_graph.add_node(source_node, color=color)
-            else:
-                source_node = job_graph[job]['Name']
-                di_graph.add_node(source_node, color=color)
-            if len(job_graph[job]['Children']) != 0:
-                children = job_graph[job]['Children']
-                for child in children:
-                    if job_graph[child]['Type'] == 'single':
-                        child_sample = os.path.basename(os.path.dirname(os.path.dirname(child)))
-                        target_node = child_sample + ' ' + job_graph[child]['Name']
-                    else:
-                        target_node = job_graph[child]['Name']
-                    di_graph.add_edge(source_node, target_node)
-        nx.draw(di_graph)
-        plt.savefig(work_dir + '/job_graph.pdf')
-
-    @staticmethod
     def job_num_in_sge():
         command = "qstat | grep `whoami` |wc -l"
         status, output = subprocess.getstatusoutput(command)
@@ -224,7 +193,6 @@ class SubJobFrame:
         # 生成流程图
         sjf = cls(flow, work_dir, samples)
         job_graph = sjf.generate_job_graph()
-        sjf.job_plot(job_graph, work_dir)
         logger.info('All Jobs Graph Created!')
         # 按流程图依赖顺序投递并监控任务状态
         jobs = list(filter(lambda x: len(job_graph[x]['Parents']) == 0, job_graph.keys()))
