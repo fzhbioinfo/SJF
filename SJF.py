@@ -166,13 +166,22 @@ class SubJobFrame:
         else:
             return 'incomplete'
 
+    @staticmethod
+    def kill_job(job_graph, jobs):
+        for job in jobs:
+            if os.path.exists(job + '.complete'):
+                continue
+            if job_graph[job]['JobID'] != '':
+                _ = subprocess.getoutput('qdel ' + job_graph[job]['JobID'])
+        logger.info('Running and pending jobs were killed!')
+
     @classmethod
     def submit(cls, job_graph, job):
         status, job_num = cls.job_num_in_sge()
         if status != 0:
             logger.info('qstat error!')
             sys.exit(1)
-        while int(job_num) >= 2000:
+        while int(job_num) >= 4000:
             time.sleep(600)
             status, job_num = cls.job_num_in_sge()
             if status != 0:
@@ -214,8 +223,11 @@ class SubJobFrame:
                     else:
                         status, output = sjf.job_status_in_sge(job_graph[job]['JobID'])
                         if status != 0 and output == '' and not os.path.exists(job + '.complete'):
-                            logger.error(job + ' Run Failed!')
-                            sys.exit(1)
+                            time.sleep(60)
+                            if not os.path.exists(job + '.complete'):
+                                logger.error(job + ' Run Failed!')
+                                sjf.kill_job(job_graph, jobs)
+                                sys.exit(1)
                 else:
                     jobs_remove.append(job)
                     jobs_add += job_graph[job]['Children']
