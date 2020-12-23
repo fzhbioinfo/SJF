@@ -246,6 +246,7 @@ def main():
     parser.add_argument('-create_only', help='only create scripts', action='store_true')
     parser.add_argument('-submit_only', help='only submit scripts', action='store_true')
     parsed_args = parser.parse_args()
+    os.system('cp ' + parsed_args.info + ' ' + os.path.join(parsed_args.work_dir, 'input.list'))
     if not parsed_args.submit_only:
         CreateJob.create_job(parsed_args)
     if parsed_args.create_only:
