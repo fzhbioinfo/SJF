@@ -5,8 +5,7 @@ SortSam	single	BwaMem	-l vf=22G,p=1 -P P18Z15000N0162
 DupMark	single	SortSam	-l vf=38G,p=2 -P P18Z15000N0162
 BaseRecalibrator	single	DupMark	-l vf=22G,p=1 -P P18Z15000N0162
 HaplotypeCaller	single	BaseRecalibrator	-l vf=22G,p=1 -P P18Z15000N0162
-FiltVcf	single	HaplotypeCaller	-l vf=22G,p=1 -P P18Z15000N0162
-BgiAnno	single	FiltVcf	-l vf=4G,p=2 -P P18Z15000N0162
+BgiAnno	single	HaplotypeCaller	-l vf=4G,p=2 -P P18Z15000N0162
 SplicePVS1Anno	single	BgiAnno	-l vf=4G,p=1 -P P18Z15000N0162
 SampleQC	single	BaseRecalibrator	-l vf=1G,p=1 -P P18Z15000N0162
 SampleMitochondriaQC	single	BaseRecalibrator	-l vf=1G,p=1 -P P18Z15000N0162
