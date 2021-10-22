@@ -28,6 +28,7 @@ class CreateJob:
         self.info_df = info_df
 
     def make(self):
+        # 创建每个任务的脚本
         self.flow.index = self.flow['Name'].tolist()
         job_conf_dic = self.flow.to_dict('index')
         self.info_df.index = self.info_df['sampleID'].tolist()
@@ -81,6 +82,7 @@ class SubJobFrame:
         self.samples = samples
 
     def generate_job_graph(self) -> dict:
+        # 根据依赖关系生成任务的关系字典流程图
         job_graph = dict()
         job_batch_dir = os.path.join(self.work_dir, 'shell')
         self.flow.index = self.flow['Name'].tolist()
@@ -137,12 +139,14 @@ class SubJobFrame:
 
     @staticmethod
     def job_num_in_sge():
+        # 获取SGE中已投递的任务数
         command = "qstat | grep `whoami` |wc -l"
         status, output = subprocess.getstatusoutput(command)
         return status, output
 
     @staticmethod
     def job_id_in_sge(command):
+        # 获取SGE的任务id
         status, output = subprocess.getstatusoutput(command)
         try:
             job_id = re.findall(r"Your job (\d+) ", output)[0]
@@ -152,12 +156,14 @@ class SubJobFrame:
 
     @staticmethod
     def job_status_in_sge(job_id):
+        # 获取任务在SGE中状态
         command = "qstat | grep " + "\"" + job_id + " " + "\""
         status, output = subprocess.getstatusoutput(command)
         return status, output
 
     @staticmethod
     def parents_status(job_graph, job):
+        # 获取父任务是否全部完成
         if len(job_graph[job]['Parents']) == 0:
             return 'complete'
         status_list = [job_graph[parent]['Status'] for parent in job_graph[job]['Parents']]
@@ -168,6 +174,7 @@ class SubJobFrame:
 
     @staticmethod
     def kill_job(job_graph, jobs):
+        # 删除任务列表中的任务
         for job in jobs:
             if os.path.exists(job + '.complete'):
                 continue
@@ -177,6 +184,7 @@ class SubJobFrame:
 
     @classmethod
     def submit(cls, job_graph, job):
+        # 投递任务
         status, job_num = cls.job_num_in_sge()
         if status != 0:
             logger.info('qstat error!')
@@ -246,6 +254,7 @@ def main():
     parser.add_argument('-create_only', help='only create scripts', action='store_true')
     parser.add_argument('-submit_only', help='only submit scripts', action='store_true')
     parsed_args = parser.parse_args()
+    # 将输入文件备份到工作目录
     os.system('cp ' + parsed_args.info + ' ' + os.path.join(parsed_args.work_dir, 'input.list'))
     if not parsed_args.submit_only:
         CreateJob.create_job(parsed_args)
