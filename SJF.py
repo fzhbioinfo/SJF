@@ -1,55 +1,55 @@
 # -*- coding:utf-8 -*-
+from argparse import ArgumentParser
+import pandas as pd
+import subprocess
+import logging
+import time
+import sys
 import os
 import re
-import sys
-import time
-import logging
-import subprocess
-import pandas as pd
-from argparse import ArgumentParser
-
 
 logger = logging.getLogger()
 formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-handler = logging.StreamHandler()
-handler.setFormatter(formatter)
-logger.addHandler(handler)
 logger.setLevel(logging.INFO)
 
 ROOT = os.path.abspath(os.path.dirname(__file__))
-CONFIG = os.path.join(ROOT, 'src')
+CONFIG = os.path.join(ROOT, 'etc')
 PIPELINE = os.path.join(ROOT, 'script')
 
 
-class CreateJob:
-    def __init__(self, flow, work_dir, info_df):
-        self.flow = flow
+class SubJobFrame:
+    def __init__(self, flow, work_dir, info):
+        # 类初始化,输入流程步骤的配置,分析的工作目录,样本信息
+        # 流程步骤和样本信息转换成字典
+        self.flow = pd.read_csv(flow, sep='\t')
+        self.flow.index = self.flow['Name'].tolist()
+        self.job_conf_dic = self.flow.to_dict('index')
         self.work_dir = work_dir
-        self.info_df = info_df
+        self.info_df = pd.read_csv(info, sep='\t')
+        self.info_df.index = self.info_df['sampleID'].tolist()
+        self.info_dic = self.info_df.to_dict('index')
 
     def make(self):
-        # 创建每个任务的脚本
-        self.flow.index = self.flow['Name'].tolist()
-        job_conf_dic = self.flow.to_dict('index')
-        self.info_df.index = self.info_df['sampleID'].tolist()
-        info_df_dic = self.info_df.to_dict('index')
-        for step in job_conf_dic.keys():
-            pipe = os.path.join(PIPELINE, step + '.sh')
-            if job_conf_dic[step]['Type'] == 'single':
-                for sample in info_df_dic.keys():
+        # 生成单样本步骤和批次步骤的分析脚本
+        # 单样本步骤脚本在work_dir/sample/shell,批次步骤脚本在work_dir/shell
+        # 第一步需要输入fq1,fq2
+        for step in self.job_conf_dic.keys():
+            pipe = os.path.join(PIPELINE, f'{step}.sh')
+            if self.job_conf_dic[step]['Type'] == 'single':
+                for sample in self.info_dic.keys():
                     script_dir = os.path.join(self.work_dir, sample, 'shell')
                     if not os.path.exists(script_dir):
                         os.makedirs(script_dir)
-                    if step != 'Filter':
-                        with open(os.path.join(script_dir, step + '.sh'), 'w') as f:
+                    if self.job_conf_dic[step]['Parents'] != 'None':
+                        with open(os.path.join(script_dir, f'{step}.sh'), 'w') as f:
                             content = '''#!/bin/bash
 sh {} {} {} {}
 '''.format(pipe, self.work_dir, ROOT, sample)
                             f.write(content)
                     else:
-                        fq1 = info_df_dic[sample]['fq1']
-                        fq2 = info_df_dic[sample]['fq2']
-                        with open(os.path.join(script_dir, step + '.sh'), 'w') as f:
+                        fq1 = self.info_dic[sample]['fq1']
+                        fq2 = self.info_dic[sample]['fq2']
+                        with open(os.path.join(script_dir, f'{step}.sh'), 'w') as f:
                             content = '''#!/bin/bash
 sh {} {} {} {} {} {}
 '''.format(pipe, self.work_dir, ROOT, sample, fq1, fq2)
@@ -58,80 +58,64 @@ sh {} {} {} {} {} {}
                 script_dir = os.path.join(self.work_dir, 'shell')
                 if not os.path.exists(script_dir):
                     os.makedirs(script_dir)
-                with open(os.path.join(script_dir, step + '.sh'), 'w') as f:
+                with open(os.path.join(script_dir, f'{step}.sh'), 'w') as f:
                     content = '''#!/bin/bash
 sh {} {} {}
 '''.format(pipe, self.work_dir, ROOT)
                     f.write(content)
 
     @classmethod
-    def create_job(cls, parsed_args):
-        flow = pd.read_csv(parsed_args.step, sep='\t')
-        work_dir = parsed_args.work_dir
-        samples_info_df = pd.read_csv(parsed_args.info, sep='\t')
+    def create_job(cls, args):
         logger.info('Start Create Scripts!')
-        cj = cls(flow, work_dir, samples_info_df)
+        cj = cls(args.step, args.work_dir, args.info)
         cj.make()
         logger.info('Create Scripts Finished!')
 
-
-class SubJobFrame:
-    def __init__(self, flow, work_dir, samples):
-        self.flow = flow
-        self.work_dir = work_dir
-        self.samples = samples
+    @staticmethod
+    def initialize_job(job_graph, job_conf_dic, job, step):
+        # 任务相关信息初始化
+        job_graph[job] = {}
+        if os.path.exists(f'{job}.complete'):
+            job_graph[job]['Status'] = 'complete'
+        else:
+            job_graph[job]['Status'] = 'incomplete'
+        job_graph[job]['Name'] = step
+        job_graph[job]['Type'] = job_conf_dic[step]['Type']
+        job_graph[job]['Resources'] = job_conf_dic[step]['Resources']
+        job_graph[job]['JobID'] = ''
+        job_graph[job]['Children'] = []
+        job_graph[job]['Parents'] = []
+        return job_graph
 
     def generate_job_graph(self) -> dict:
-        # 根据依赖关系生成任务的关系字典流程图
+        # 生成任务依赖关系字典
         job_graph = dict()
         job_batch_dir = os.path.join(self.work_dir, 'shell')
-        self.flow.index = self.flow['Name'].tolist()
-        job_conf_dic = self.flow.to_dict('index')
-        for step in job_conf_dic.keys():
-            if job_conf_dic[step]['Type'] == 'single':
-                for sample in self.samples:
+        for step in self.job_conf_dic.keys():
+            if self.job_conf_dic[step]['Type'] == 'single':
+                for sample in self.info_dic.keys():
                     job_single_dir = os.path.join(self.work_dir, sample, 'shell')
-                    job = os.path.join(job_single_dir, step + '.sh')
-                    job_graph[job] = {}
-                    job_graph[job]['Name'] = step
-                    job_graph[job]['Type'] = 'single'
-                    job_graph[job]['Resources'] = job_conf_dic[step]['Resources']
-                    job_graph[job]['JobID'] = ''
-                    job_graph[job]['Children'] = []
-                    if os.path.exists(job + '.complete'):
-                        job_graph[job]['Status'] = 'complete'
-                    else:
-                        job_graph[job]['Status'] = 'incomplete'
-                    parents = job_conf_dic[step]['Parents'].split(',')
-                    job_graph[job]['Parents'] = []
+                    job = os.path.join(job_single_dir, f'{step}.sh')
+                    job_graph = self.initialize_job(job_graph, self.job_conf_dic, job, step)
+                    parents = self.job_conf_dic[step]['Parents'].split(',')
                     for parent in parents:
                         if parent != 'None':
-                            if job_conf_dic[parent]['Type'] == 'single':
-                                job_graph[job]['Parents'].append(os.path.join(job_single_dir, parent + '.sh'))
+                            if self.job_conf_dic[parent]['Type'] == 'single':
+                                job_graph[job]['Parents'].append(os.path.join(job_single_dir, f'{parent}.sh'))
                             else:
-                                job_graph[job]['Parents'].append(os.path.join(job_batch_dir, parent + '.sh'))
+                                job_graph[job]['Parents'].append(os.path.join(job_batch_dir, f'{parent}.sh'))
             else:
-                job = os.path.join(job_batch_dir, step + '.sh')
-                job_graph[job] = {}
-                job_graph[job]['Name'] = step
-                job_graph[job]['Type'] = 'batch'
-                job_graph[job]['Resources'] = job_conf_dic[step]['Resources']
-                job_graph[job]['JobID'] = ''
-                job_graph[job]['Children'] = []
-                if os.path.exists(job + '.complete'):
-                    job_graph[job]['Status'] = 'complete'
-                else:
-                    job_graph[job]['Status'] = 'incomplete'
-                parents = job_conf_dic[step]['Parents'].split(',')
-                job_graph[job]['Parents'] = []
+                job = os.path.join(job_batch_dir, f'{step}.sh')
+                job_graph = self.initialize_job(job_graph, self.job_conf_dic, job, step)
+                parents = self.job_conf_dic[step]['Parents'].split(',')
                 for parent in parents:
                     if parent != 'None':
-                        if job_conf_dic[parent]['Type'] == 'single':
-                            for sample in self.samples:
+                        if self.job_conf_dic[parent]['Type'] == 'single':
+                            for sample in self.info_dic.keys():
                                 job_single_dir = os.path.join(self.work_dir, sample, 'shell')
-                                job_graph[job]['Parents'].append(os.path.join(job_single_dir, parent + '.sh'))
+                                job_graph[job]['Parents'].append(os.path.join(job_single_dir, f'{parent}.sh'))
                         else:
-                            job_graph[job]['Parents'].append(os.path.join(job_batch_dir, parent + '.sh'))
+                            job_graph[job]['Parents'].append(os.path.join(job_batch_dir, f'{parent}.sh'))
         for job in job_graph.keys():
             for parent in job_graph[job]['Parents']:
                 job_graph[parent]['Children'].append(job)
@@ -139,14 +123,14 @@ class SubJobFrame:
 
     @staticmethod
     def job_num_in_sge():
-        # 获取SGE中已投递的任务数
+        # SGE任务数目
         command = "qstat | grep `whoami` |wc -l"
         status, output = subprocess.getstatusoutput(command)
         return status, output
 
     @staticmethod
     def job_id_in_sge(command):
-        # 获取SGE的任务id
+        # 获取投递任务的ID
         status, output = subprocess.getstatusoutput(command)
         try:
             job_id = re.findall(r"Your job (\d+) ", output)[0]
@@ -156,14 +140,14 @@ class SubJobFrame:
 
     @staticmethod
     def job_status_in_sge(job_id):
-        # 获取任务在SGE中状态
+        # 检查任务是否还在运行或排队
         command = "qstat | grep " + "\"" + job_id + " " + "\""
         status, output = subprocess.getstatusoutput(command)
         return status, output
 
     @staticmethod
     def parents_status(job_graph, job):
-        # 获取父任务是否全部完成
+        # 分析任务的所有父任务是否完成
         if len(job_graph[job]['Parents']) == 0:
             return 'complete'
         status_list = [job_graph[parent]['Status'] for parent in job_graph[job]['Parents']]
@@ -174,41 +158,35 @@ class SubJobFrame:
 
     @staticmethod
     def kill_job(job_graph, jobs):
-        # 删除任务列表中的任务
+        # 杀任务
         for job in jobs:
-            if os.path.exists(job + '.complete'):
+            if os.path.exists(f'{job}.complete'):
                 continue
             if job_graph[job]['JobID'] != '':
                 _ = subprocess.getoutput('qdel ' + job_graph[job]['JobID'])
         logger.info('Running and pending jobs were killed!')
 
-    @classmethod
-    def submit(cls, job_graph, job):
+    def submit(self, job_graph, job):
         # 投递任务
-        status, job_num = cls.job_num_in_sge()
+        status, job_num = self.job_num_in_sge()
         if status != 0:
             logger.info('qstat error!')
             sys.exit(1)
         while int(job_num) >= 4000:
             time.sleep(600)
-            status, job_num = cls.job_num_in_sge()
+            status, job_num = self.job_num_in_sge()
             if status != 0:
                 logger.info('qstat error!')
                 sys.exit(1)
         job_path = os.path.dirname(job)
         command = "qsub -wd " + job_path + " " + job_graph[job]['Resources'] + " " + job
-        status, job_id = cls.job_id_in_sge(command)
+        status, job_id = self.job_id_in_sge(command)
         return status, job_id
 
     @classmethod
-    def work_flow(cls, parsed_args):
-        # 读取流程、工作路径、样本编号
-        flow = pd.read_csv(parsed_args.step, sep='\t')
-        work_dir = parsed_args.work_dir
-        samples_info_df = pd.read_csv(parsed_args.info, sep='\t')
-        samples = samples_info_df['sampleID'].tolist()
+    def work_flow(cls, args):
         # 生成流程图
-        sjf = cls(flow, work_dir, samples)
+        sjf = cls(args.step, args.work_dir, args.info)
         job_graph = sjf.generate_job_graph()
         logger.info('All Jobs Graph Created!')
         # 按流程图依赖顺序投递并监控任务状态
@@ -217,29 +195,29 @@ class SubJobFrame:
             jobs_add = []
             jobs_remove = []
             for job in jobs:
-                if os.path.exists(job + '.complete'):
+                if os.path.exists(f'{job}.complete'):
                     job_graph[job]['Status'] = 'complete'
                 if job_graph[job]['Status'] == 'incomplete':
                     if job_graph[job]['JobID'] == '':
                         if sjf.parents_status(job_graph, job) == 'complete':
                             status, job_id = sjf.submit(job_graph, job)
                             if status != 0:
-                                logger.error(job + ' Submit Failed!')
+                                logger.error(f'{job} Submit Failed!')
                                 sys.exit(1)
                             job_graph[job]['JobID'] = job_id
-                            logger.info(job + ' Submit Success! JobID is ' + job_id)
+                            logger.info(f'{job} Submit Success! JobID is {job_id}')
                     else:
                         status, output = sjf.job_status_in_sge(job_graph[job]['JobID'])
-                        if status != 0 and output == '' and not os.path.exists(job + '.complete'):
+                        if status != 0 and output == '' and not os.path.exists(f'{job}.complete'):
                             time.sleep(60)
-                            if not os.path.exists(job + '.complete'):
-                                logger.error(job + ' Run Failed!')
+                            if not os.path.exists(f'{job}.complete'):
+                                logger.error(f'{job} Run Failed!')
                                 sjf.kill_job(job_graph, jobs)
                                 sys.exit(1)
                 else:
                     jobs_remove.append(job)
                     jobs_add += job_graph[job]['Children']
-                    logger.info(job + ' Finished!')
+                    logger.info(f'{job} Finished!')
             if len(jobs_add) == 0:
                 time.sleep(60)
             jobs = list(set(list(set(jobs) - set(jobs_remove)) + jobs_add))
@@ -254,10 +232,14 @@ def main():
     parser.add_argument('-create_only', help='only create scripts', action='store_true')
     parser.add_argument('-submit_only', help='only submit scripts', action='store_true')
     parsed_args = parser.parse_args()
-    # 将输入文件备份到工作目录
-    os.system('cp ' + parsed_args.info + ' ' + os.path.join(parsed_args.work_dir, 'input.list'))
+    if not os.path.exists(parsed_args.work_dir):
+        os.makedirs(parsed_args.work_dir)
+    handler = logging.FileHandler(f'{parsed_args.work_dir}/auto.log')
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+    subprocess.Popen('cp ' + parsed_args.info + ' ' + os.path.join(parsed_args.work_dir, 'input.list'), shell=True)
     if not parsed_args.submit_only:
-        CreateJob.create_job(parsed_args)
+        SubJobFrame.create_job(parsed_args)
     if parsed_args.create_only:
         logger.info('Only Create Scripts and Exit!')
         sys.exit(0)
